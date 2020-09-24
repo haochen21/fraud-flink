@@ -36,7 +36,7 @@ public class DynamicAlertFunction
 
     private static int CLEAR_STATE_COMMAND_KEY = Integer.MIN_VALUE + 1;
 
-    private transient MapState<Long, Set<Transaction>> windowsState;
+    private transient MapState<Long, Set<Transaction>> windowState;
 
     private Meter alertMeter;
 
@@ -50,7 +50,7 @@ public class DynamicAlertFunction
 
     @Override
     public void open(Configuration parameters) throws Exception {
-        windowsState = getRuntimeContext().getMapState(windowStateDescriptor);
+        windowState = getRuntimeContext().getMapState(windowStateDescriptor);
 
         alertMeter = new MeterView(60);
         getRuntimeContext().getMetricGroup().meter("alertPerSecond", alertMeter);
@@ -60,12 +60,12 @@ public class DynamicAlertFunction
     public void processElement(Keyed<Transaction, String, Integer> value, ReadOnlyContext ctx, Collector<Alert> out) throws Exception {
         long currentEventTime = value.getWrapped().getEventTime();
 
-        Set<Transaction> valuesSet = windowsState.get(currentEventTime);
+        Set<Transaction> valuesSet = windowState.get(currentEventTime);
         if (valuesSet == null) {
             valuesSet = new HashSet<>();
         }
         valuesSet.add(value.getWrapped());
-        windowsState.put(currentEventTime, valuesSet);
+        windowState.put(currentEventTime, valuesSet);
 
         long ingestionTime = value.getWrapped().getIngestionTimestamp();
         ctx.output(Descriptors.latencySinkTag, System.currentTimeMillis() - ingestionTime);
@@ -84,9 +84,9 @@ public class DynamicAlertFunction
             ctx.timerService().registerEventTimeTimer(cleanupTime);
 
             SimpleAccumulator<BigDecimal> aggregator = RuleHelper.getAggregator(rule);
-            for (Long stateEventTime : windowsState.keys()) {
+            for (Long stateEventTime : windowState.keys()) {
                 if (stateEventTime >= windowStartForEvent && stateEventTime <= currentEventTime) {
-                    Set<Transaction> inWindow = windowsState.get(stateEventTime);
+                    Set<Transaction> inWindow = windowState.get(stateEventTime);
                     if (rule.getAggregateFieldName().equals(COUNT)
                             || rule.getAggregateFieldName().equals(COUNT_WITH_RESET)) {
                         for (Transaction transaction : inWindow) {
@@ -100,6 +100,26 @@ public class DynamicAlertFunction
                         }
                     }
                 }
+            }
+            BigDecimal aggregateResult = aggregator.getLocalValue();
+            boolean ruleResult = rule.apply(aggregateResult);
+
+            ctx.output(Descriptors.demoSinkTag,
+                    "Rule "
+                            + rule.getRuleId()
+                            + " |" + value.getKey()
+                            + " : "
+                            + aggregateResult.toString()
+                            + " -> " + ruleResult);
+
+            if (ruleResult) {
+                if (COUNT_WITH_RESET.equals(rule.getAggregateFieldName())) {
+                    evictAllStateElements();
+                }
+                alertMeter.markEvent();
+                out.collect(
+                        new Alert<>(
+                                rule.getRuleId(), rule, value.getKey(), value.getWrapped(), aggregateResult));
             }
         }
 
@@ -152,6 +172,18 @@ public class DynamicAlertFunction
                     }
                     break;
             }
+        }
+    }
+
+    private void evictAllStateElements() {
+        try {
+            Iterator<Long> keys = windowState.keys().iterator();
+            while (keys.hasNext()) {
+                keys.next();
+                keys.remove();
+            }
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
         }
     }
 }

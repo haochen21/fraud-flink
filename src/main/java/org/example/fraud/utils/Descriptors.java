@@ -18,4 +18,7 @@ public class Descriptors {
 
     public static final OutputTag<Long> latencySinkTag = new OutputTag<Long>("latency-sink") {
     };
+
+    public static final OutputTag<String> demoSinkTag = new OutputTag<String>("demo-sink") {
+    };
 }

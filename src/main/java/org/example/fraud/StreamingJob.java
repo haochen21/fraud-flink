@@ -18,7 +18,27 @@
 
 package org.example.fraud;
 
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.streaming.api.TimeCharacteristic;
+import org.apache.flink.streaming.api.datastream.BroadcastStream;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.source.SourceFunction;
+import org.apache.flink.streaming.api.windowing.time.Time;
+import org.example.fraud.domain.Alert;
+import org.example.fraud.domain.Rule;
+import org.example.fraud.domain.Transaction;
+import org.example.fraud.functions.AverageAggregate;
+import org.example.fraud.functions.DynamicAlertFunction;
+import org.example.fraud.functions.DynamicKeyFunction;
+import org.example.fraud.sinks.LatencySink;
+import org.example.fraud.sources.RulesSource;
+import org.example.fraud.sources.TransactionsSource;
+import org.example.fraud.utils.Descriptors;
+
+import java.io.IOException;
+import java.time.Duration;
 
 /**
  * Skeleton for a Flink Streaming Job.
@@ -34,31 +54,68 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
  */
 public class StreamingJob {
 
-	public static void main(String[] args) throws Exception {
-		// set up the streaming execution environment
-		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    public void run() throws Exception {
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
-		/*
-		 * Here, you can start creating your execution plan for Flink.
-		 *
-		 * Start with getting some data from the environment, like
-		 * 	env.readTextFile(textPath);
-		 *
-		 * then, transform the resulting DataStream<String> using operations
-		 * like
-		 * 	.filter()
-		 * 	.flatMap()
-		 * 	.join()
-		 * 	.coGroup()
-		 *
-		 * and many more.
-		 * Have a look at the programming guide for the Java API:
-		 *
-		 * https://flink.apache.org/docs/latest/apis/streaming/index.html
-		 *
-		 */
+        DataStream<Rule> rulesUpdateStream = getRulesUpdateStream(env);
+        DataStream<Transaction> transactions = getTransactionsStream(env);
 
-		// execute program
-		env.execute("Flink Streaming Java API Skeleton");
-	}
+        BroadcastStream<Rule> rulesStream = rulesUpdateStream.broadcast(Descriptors.rulesDescriptor);
+
+        DataStream<Alert> alerts = transactions
+                .connect(rulesStream)
+                .process(new DynamicKeyFunction())
+                .uid("DynamicKeyFunction")
+                .name("Dynamic Partitioning Function")
+                .keyBy((keyed) -> keyed.getKey())
+                .connect(rulesStream)
+                .process(new DynamicAlertFunction())
+                .uid("DynamicAlertFunction")
+                .name("Dynamic Rule Evaluation Function");
+
+        DataStream<String> allRuleEvaluations =
+                ((SingleOutputStreamOperator<Alert>) alerts).getSideOutput(Descriptors.demoSinkTag);
+
+        DataStream<Long> latency =
+                ((SingleOutputStreamOperator<Alert>) alerts).getSideOutput(Descriptors.latencySinkTag);
+
+        DataStream<Rule> currentRules =
+                ((SingleOutputStreamOperator<Alert>) alerts).getSideOutput(Descriptors.currentRulesSinkTag);
+
+        alerts.print();
+
+        DataStream<String> latencies = latency.timeWindowAll(Time.seconds(30))
+                .aggregate(new AverageAggregate())
+                .map(String::valueOf);
+        latencies.addSink(LatencySink.createLatencySink());
+
+        env.execute("Flink Streaming Java API Skeleton");
+    }
+
+    private DataStream<Transaction> getTransactionsStream(StreamExecutionEnvironment env) {
+        SourceFunction<String> transactionSource = TransactionsSource.createTransactionsSource();
+        DataStream<String> transactionsStringsStream =
+                env.addSource(transactionSource)
+                        .name("Transactions Source")
+                        .setParallelism(1);
+        DataStream<Transaction> transactionsStream =
+                TransactionsSource.stringsStreamToTransactions(transactionsStringsStream);
+        return transactionsStream.assignTimestampsAndWatermarks(
+                WatermarkStrategy.<Transaction>forBoundedOutOfOrderness(Duration.ofMillis(500))
+                        .withTimestampAssigner((event, timestamp) -> event.getEventTime())
+                        .withIdleness(Duration.ofMillis(500)));
+    }
+
+    private DataStream<Rule> getRulesUpdateStream(StreamExecutionEnvironment env) throws IOException {
+        SourceFunction<String> rulesSource = RulesSource.createRulesSource();
+        DataStream<String> rulesStrings =
+                env.addSource(rulesSource).name("kafka").setParallelism(1);
+        return RulesSource.stringsStreamToRules(rulesStrings);
+    }
+
+    public static void main(String[] args) throws Exception {
+        StreamingJob streamingJob = new StreamingJob();
+        streamingJob.run();
+    }
 }
