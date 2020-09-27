@@ -44,6 +44,7 @@ public class DynamicKeyFunction
             // 事件，主键，规则ID
             Keyed<Transaction, String, Integer> keyed =
                     new Keyed<>(event, KeysExtractor.getKey(rule.getGroupingKeyNames(), event), rule.getRuleId());
+            out.collect(keyed);
             ruleCounter++;
         }
         ruleCounterGauge.setValue(ruleCounter);

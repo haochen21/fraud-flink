@@ -25,8 +25,8 @@ import java.io.IOException;
 
 public class LatencySink {
 
-  public static SinkFunction<String> createLatencySink() throws IOException {
-    return new PrintSinkFunction<>(true);
-  }
+    public static SinkFunction<String> createLatencySink() throws IOException {
+        return new PrintSinkFunction<>("Latency: ", true);
+    }
 
 }

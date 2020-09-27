@@ -7,6 +7,8 @@ import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer;
 import org.example.fraud.domain.Rule;
 import org.example.fraud.functions.JsonDeserializer;
+import org.example.fraud.params.Config;
+import org.example.fraud.params.Parameters;
 
 import java.time.Duration;
 import java.util.Properties;
@@ -15,13 +17,13 @@ public class RulesSource {
 
     private static final int RULES_STREAM_PARALLELISM = 1;
 
-    public static SourceFunction<String> createRulesSource() {
+    public static SourceFunction<String> createRulesSource(Config config) {
         Properties properties = new Properties();
-        properties.setProperty("bootstrap.servers", "192.168.31.39:9095,192.168.31.39:9096");
-        properties.setProperty("group.id", "rules");
+        properties.setProperty("bootstrap.servers", config.get(Parameters.KAFKA_HOST));
+        properties.setProperty("group.id", config.get(Parameters.RULE_TOPIC));
 
-        FlinkKafkaConsumer<String> kafkaConsumer = new FlinkKafkaConsumer<>("rules", new SimpleStringSchema(), properties);
-        kafkaConsumer.setStartFromEarliest();
+        FlinkKafkaConsumer<String> kafkaConsumer = new FlinkKafkaConsumer<>(config.get(Parameters.RULE_TOPIC), new SimpleStringSchema(), properties);
+        kafkaConsumer.setStartFromLatest();
         return kafkaConsumer;
     }
 

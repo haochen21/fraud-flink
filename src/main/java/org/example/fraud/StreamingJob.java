@@ -18,7 +18,10 @@
 
 package org.example.fraud;
 
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.java.utils.ParameterTool;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -32,6 +35,8 @@ import org.example.fraud.domain.Transaction;
 import org.example.fraud.functions.AverageAggregate;
 import org.example.fraud.functions.DynamicAlertFunction;
 import org.example.fraud.functions.DynamicKeyFunction;
+import org.example.fraud.params.Config;
+import org.example.fraud.params.Parameters;
 import org.example.fraud.sinks.LatencySink;
 import org.example.fraud.sources.RulesSource;
 import org.example.fraud.sources.TransactionsSource;
@@ -52,14 +57,23 @@ import java.time.Duration;
  * <p>If you change the name of the main class (with the public static void main(String[] args))
  * method, change the respective entry in the POM.xml file (simply search for 'mainClass').
  */
+@Slf4j
 public class StreamingJob {
 
     public void run() throws Exception {
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        ParameterTool tool = ParameterTool.fromPropertiesFile(
+                getClass().getClassLoader().getResourceAsStream("fraud.properties"));
+        Parameters inputParams = new Parameters(tool);
+        Config config = new Config(inputParams, Parameters.STRING_PARAMS, Parameters.INTEGER_PARAMS, Parameters.BOOLEAN_PARAMS);
+
+        final StreamExecutionEnvironment env = StreamExecutionEnvironment
+                .createLocalEnvironmentWithWebUI(new Configuration());
         env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
 
-        DataStream<Rule> rulesUpdateStream = getRulesUpdateStream(env);
-        DataStream<Transaction> transactions = getTransactionsStream(env);
+        env.setParallelism(config.get(Parameters.SOURCE_PARALLELISM));
+
+        DataStream<Rule> rulesUpdateStream = getRulesUpdateStream(env, config);
+        DataStream<Transaction> transactions = getTransactionsStream(env, config);
 
         BroadcastStream<Rule> rulesStream = rulesUpdateStream.broadcast(Descriptors.rulesDescriptor);
 
@@ -83,7 +97,9 @@ public class StreamingJob {
         DataStream<Rule> currentRules =
                 ((SingleOutputStreamOperator<Alert>) alerts).getSideOutput(Descriptors.currentRulesSinkTag);
 
-        alerts.print();
+        alerts.print().name("Alert STOUT SINK");
+
+        allRuleEvaluations.print().name("Rule Evaluation Sink");
 
         DataStream<String> latencies = latency.timeWindowAll(Time.seconds(30))
                 .aggregate(new AverageAggregate())
@@ -93,8 +109,8 @@ public class StreamingJob {
         env.execute("Flink Streaming Java API Skeleton");
     }
 
-    private DataStream<Transaction> getTransactionsStream(StreamExecutionEnvironment env) {
-        SourceFunction<String> transactionSource = TransactionsSource.createTransactionsSource();
+    private DataStream<Transaction> getTransactionsStream(StreamExecutionEnvironment env, Config config) {
+        SourceFunction<String> transactionSource = TransactionsSource.createTransactionsSource(config);
         DataStream<String> transactionsStringsStream =
                 env.addSource(transactionSource)
                         .name("Transactions Source")
@@ -107,8 +123,8 @@ public class StreamingJob {
                         .withIdleness(Duration.ofMillis(500)));
     }
 
-    private DataStream<Rule> getRulesUpdateStream(StreamExecutionEnvironment env) throws IOException {
-        SourceFunction<String> rulesSource = RulesSource.createRulesSource();
+    private DataStream<Rule> getRulesUpdateStream(StreamExecutionEnvironment env, Config config) throws IOException {
+        SourceFunction<String> rulesSource = RulesSource.createRulesSource(config);
         DataStream<String> rulesStrings =
                 env.addSource(rulesSource).name("kafka").setParallelism(1);
         return RulesSource.stringsStreamToRules(rulesStrings);
