@@ -142,6 +142,7 @@ public class DynamicAlertFunction
         }
 
         // update widest window rule
+        // key is : WIDEST_RULE_KEY
         if (rule.getRuleState() == Rule.RuleState.ACTIVE) {
             Rule widestWindowRule = broadcastState.get(WIDEST_RULE_KEY);
             if (Objects.isNull(widestWindowRule)) {
@@ -172,6 +173,32 @@ public class DynamicAlertFunction
                     }
                     break;
             }
+        }
+    }
+
+    @Override
+    public void onTimer(long timestamp, OnTimerContext ctx, Collector<Alert> out) throws Exception {
+        Rule widestWindowRule = ctx.getBroadcastState(Descriptors.rulesDescriptor).get(WIDEST_RULE_KEY);
+        Optional<Long> cleanupEventTimeWindow =
+                Optional.ofNullable(widestWindowRule).map(Rule::getWindowMills);
+        Optional<Long> cleanupEventTimeThreshold =
+                cleanupEventTimeWindow.map(window -> timestamp - window);
+        if (cleanupEventTimeThreshold.isPresent()) {
+            this.evictAgedElementsFromWindow(cleanupEventTimeThreshold.get());
+        }
+    }
+
+    private void evictAgedElementsFromWindow(Long threshold) {
+        try {
+            Iterator<Long> keys = windowState.keys().iterator();
+            while (keys.hasNext()) {
+                Long stateEventTime = keys.next();
+                if (stateEventTime < threshold) {
+                    keys.remove();
+                }
+            }
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
         }
     }
 

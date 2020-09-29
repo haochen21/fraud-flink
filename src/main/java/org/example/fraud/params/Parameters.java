@@ -42,22 +42,33 @@ public class Parameters {
 
     public static final Param<Integer> SOURCE_PARALLELISM = Param.integer("source.parallelism", 2);
     public static final Param<Boolean> ENABLE_CHECKPOINTS = Param.bool("enable.checkpoints", false);
+    public static final Param<Boolean> LOCAL_EXECUTION = Param.bool("local.execution", false);
+    public static final Param<Integer> CHECKPOINT_INTERVAL = Param.integer("checkpoint.interval", 60 * 1000);
+    public static final Param<Integer> MIN_PAUSE_BTWN_CHECKPOINTS = Param.integer("min.pause.btwn.checkpoints", 600 * 1000);
+    public static final Param<String> CHECKPOINT_DATA_DIR = Param.string("checkpoint.data.dir", "/Users/chenhao/Documents/fraud_checkpoint");
+    public static final Param<String> lastCheckpointFilePath = Param.string("last.checkpoint.filePath", "");
 
     public static final List<Param<String>> STRING_PARAMS =
             Arrays.asList(
                     KAFKA_HOST,
                     DATA_TOPIC,
                     RULE_TOPIC,
-                    ALERT_TOPIC
+                    ALERT_TOPIC,
+                    CHECKPOINT_DATA_DIR,
+                    lastCheckpointFilePath
             );
 
     public static final List<Param<Integer>> INTEGER_PARAMS =
             Arrays.asList(
-                    SOURCE_PARALLELISM
+                    SOURCE_PARALLELISM,
+                    CHECKPOINT_INTERVAL,
+                    MIN_PAUSE_BTWN_CHECKPOINTS
             );
 
     public static final List<Param<Boolean>> BOOLEAN_PARAMS =
             Arrays.asList(
-                    ENABLE_CHECKPOINTS
+                    ENABLE_CHECKPOINTS,
+                    LOCAL_EXECUTION
             );
+
 }
